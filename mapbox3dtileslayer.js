@@ -289,7 +289,7 @@ class Mapbox3DTileLayer {
 		
 		this.id = params.id,
 		this.url = params.url;
-		let styleParams = {};
+		this.styleParams = {};
 		if ('color' in params) styleParams.color = params.color;
 		if ('opacity' in params) styleParams.opacity = params.opacity;
 		if ('pointsize' in params) styleParams.pointsize = params.pointsize;
@@ -299,114 +299,88 @@ class Mapbox3DTileLayer {
 		
 		this.type = 'custom';
 		this.renderingMode = '3d';
-		
-		this.getCameraPosition = () => {
-			if (!this.viewProjectionMatrix)
-				return new THREE.Vector3();
-			let cam = new THREE.Camera();
-			let rootInverse = new THREE.Matrix4().getInverse(this.rootTransform);
-			cam.projectionMatrix.elements = this.viewProjectionMatrix;
-			cam.projectionMatrixInverse = new THREE.Matrix4().getInverse( cam.projectionMatrix );// add since three@0.103.0
-			let campos = new THREE.Vector3(0, 0, 0).unproject(cam).applyMatrix4(rootInverse);
-			return campos;
-		}
-		
-		this.onAdd = async (map, gl) => {
-      this.renderer = new THREE.WebGLRenderer({
-				canvas: map.getCanvas(),
-				context: gl
-			});
-			this.renderer.autoClear = false;
-			this.map = map;
-			const fov = 45;
-			const aspect = window.innerWidth/window.innerHeight;
-			const near = 0.01;
-			const far = 1000;
-						
-			this.camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
-			this.scene = new THREE.Scene();
-			this.rootTransform = transform2mapbox([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); // identity matrix tranformed to mapbox scale
-      lightsarray.forEach(light=>{
-        this.scene.add(light);
-      });
-
-			this.tileset = new TileSet();
-			
-			await this.tileset.load(this.url, styleParams)
-			if (this.tileset.root.transform) {
+  };
+  getCameraPosition() {
+    if (!this.viewProjectionMatrix)
+      return new THREE.Vector3();
+    let cam = new THREE.Camera();
+    let rootInverse = new THREE.Matrix4().getInverse(this.rootTransform);
+    cam.projectionMatrix.elements = this.viewProjectionMatrix;
+    cam.projectionMatrixInverse = new THREE.Matrix4().getInverse( cam.projectionMatrix );// add since three@0.103.0
+    let campos = new THREE.Vector3(0, 0, 0).unproject(cam).applyMatrix4(rootInverse);
+    return campos;
+  }
+  
+  async onAdd (map, gl) {
+    this.renderer = new THREE.WebGLRenderer({
+      canvas: map.getCanvas(),
+      context: gl
+    });
+    this.renderer.autoClear = false;
+    this.map = map;
+    const fov = 45;
+    const aspect = window.innerWidth/window.innerHeight;
+    const near = 0.01;
+    const far = 1000;
+          
+    this.camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+    this.scene = new THREE.Scene();
+    this.tileset = new TileSet();
+    this.tileset.load(this.url, this.styleParams).then(()=>{
+      if (this.tileset.root.transform) {
         this.rootTransform = transform2mapbox(this.tileset.root.transform);
       } else {
         this.rootTransform = transform2mapbox([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); // identity matrix tranformed to mapbox scale
+      } 
+      if (this.tileset.root) {
+          this.scene.add(this.tileset.root.totalContent);
       }
-				
-			if (this.tileset.root) {
-					this.scene.add(this.tileset.root.totalContent);
-			}
-				
       this.loadStatus = 1;
+    });
 
-      let refresh = () => {
-        let frustum = new THREE.Frustum();
-        frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+    this.rootTransform = transform2mapbox([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); // identity matrix tranformed to mapbox scale
+    lightsarray.forEach(light=>{
+      this.scene.add(light);
+    });
+    let refresh = () => {
+      let frustum = new THREE.Frustum();
+      frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+      this.tileset.root.checkLoad(frustum, this.getCameraPosition());
+    };
+    map.on('dragend',refresh);
+    map.on('moveend',refresh); 
+    map.on('load',refresh);
+    
+    map.on('mousemove',e=>{
+      //let [mouseX, mouseY] = d3.mouse(view.node());
+        let mouse_position = [e.point.x, e.point.y];
+      //Utils.checkIntersects(mouse_position,self.camera,self.tileset.root.totalContent);
+    })
+  }
+  render(gl, viewProjectionMatrix) {
+    this.viewProjectionMatrix = viewProjectionMatrix;
+    let l = new THREE.Matrix4().fromArray(viewProjectionMatrix);
+    this.renderer.state.reset();
+    
+    // The root tile transform is applied to the camera while rendering
+    // instead of to the root tile. This avoids precision errors.
+    this.camera.projectionMatrix = l.multiply(this.rootTransform); //ANNE: undo
+    //this.camera.projectionMatrix = l;
+    
+    
+    this.renderer.render(this.scene, this.camera);
+          
+    //this.composer.render(); //ssao
+    if (this.loadStatus == 1) { // first render after root tile is loaded
+      this.loadStatus = 2;
+      let frustum = new THREE.Frustum();
+      frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+      if (this.tileset.root) {
         this.tileset.root.checkLoad(frustum, this.getCameraPosition());
-      };
-      map.on('dragend',refresh); 
-      map.on('moveend',refresh); 
-      map.on('load',refresh);
-      
-      map.on('mousemove',e=>{
-        //let [mouseX, mouseY] = d3.mouse(view.node());
-          let mouse_position = [e.point.x, e.point.y];
-        //Utils.checkIntersects(mouse_position,self.camera,self.tileset.root.totalContent);
-      })
-			
-			
-			/* WIP on ssao  
-			this.composer = new EffectComposer( this.renderer );
-			let width = window.innerWidth;
-			let height = window.innerHeight;
-			let ssaoPass = new SSAOPass( this.scene, this.camera);
-			ssaoPass.kernelRadius = 16;
-			ssaoPass.output = SSAOPass.OUTPUT.Default;
-			window.ssaoPass = ssaoPass;
-			this.composer.addPass( ssaoPass );
-			/* end of ssao*/
-
-			//this.skybox = Utils.loadSkybox(new URL('https://threejsfundamentals.org/threejs/resources/images/equirectangularmaps/tears_of_steel_bridge_2k.jpg').href);
-
-		},
-		this.render = function(gl, viewProjectionMatrix) {
-			this.viewProjectionMatrix = viewProjectionMatrix;
-			let l = new THREE.Matrix4().fromArray(viewProjectionMatrix);
-			this.renderer.state.reset();
-			
-			// The root tile transform is applied to the camera while rendering
-			// instead of to the root tile. This avoids precision errors.
-      this.camera.projectionMatrix = l.multiply(this.rootTransform); //ANNE: undo
-      //this.camera.projectionMatrix = l;
-			
-			/*RENDER SKYBOX */
-			/* WIP
-			this.skybox.camera.rotation.copy(this.camera.rotation);
-			this.skybox.camera.fov = this.camera.fov;
-			this.skybox.camera.aspect = this.camera.aspect;
-			this.skybox.camera.updateProjectionMatrix();
-			this.renderer.render(this.skybox.scene, this.skybox.camera);
-			*/
-            this.renderer.render(this.scene, this.camera);
-            
-			//this.composer.render(); //ssao
-			if (this.loadStatus == 1) { // first render after root tile is loaded
-				this.loadStatus = 2;
-				let frustum = new THREE.Frustum();
-				frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
-				if (this.tileset.root) {
-					this.tileset.root.checkLoad(frustum, this.getCameraPosition());
-				}
-			}
-			
-		}
-	}
+      }
+    }
+    
+  }
 }
 
 
