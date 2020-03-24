@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tom3dtiles</title>
+    <!--script src="./mapbox-gl-dev.js"></script -->
+    <script src="https://cdn.jsdelivr.net/npm/mapbox-gl@1.8.1/dist/mapbox-gl.js"></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v1.8.1/mapbox-gl.css' rel='stylesheet' />
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.114.0/build/three.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.114.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="./config.js"></script>
+    <script src="./mapbox3dtileslayer.js"></script>
+    <!--script src="./camerasync.js"></script-->
+    <script>
+        let glmap;
+        let width;
+        let cameraSync;
+
+        function logMatrix(label, matrix) {
+            console.log(label);
+            if (!matrix) {
+                console.log('undefined');
+                return
+            }
+            console.log(`[${matrix[0]} ${matrix[1]} ${matrix[2]} ${matrix[3]} || ${matrix[4]} ${matrix[5]} ${matrix[6]} ${matrix[7]} || ${matrix[8]} ${matrix[9]} ${matrix[10]} ${matrix[11]} || ${matrix[12]} ${matrix[13]} ${matrix[14]} ${matrix[15]}]`);
+        }
+
+        let tileslayer = new Mapbox3DTileLayer( { 
+          id: 'Geotop', 
+          url: 'https://saturnus.geodan.nl/maquette_nl/data/buildingtiles_velsen_3857/tileset.json',
+        });
+
+        function Raycaster() {
+          let raycaster = new THREE.Raycaster();
+          //raycaster.params.Points.threshold = 1;
+          return raycaster;
+        }
+        let raycaster = Raycaster();
+
+        function mouseToThree(mouseX, mouseY) {
+          let height = 400;
+          return new THREE.Vector3(
+            mouseX / width * 2 - 1,
+            -(mouseY / height) * 2 + 1,
+            1
+          );
+        }
+
+        function sortIntersectsByDistanceToRay(intersects) {
+         return intersects.sort(d=>d.distanceToRay);
+        }
+
+        function checkIntersects(mouse_position,camera, scene) {
+          let mouse_vector = mouseToThree(...mouse_position);
+          camera.updateMatrixWorld();
+          camera.projectionMatrixInverse.getInverse(camera.projectionMatrix);
+          raycaster.setFromCamera(mouse_vector, camera);
+          let intersects = [];
+          scene.traverse(c=>{
+            if (c.isMesh) {
+              intersects = raycaster.intersectObject(c);
+
+              if (intersects[0]) {
+                
+                let sorted_intersects = sortIntersectsByDistanceToRay(intersects);
+                let intersect = sorted_intersects[0];
+                intersect.object.material.color.set( 0xff0000 );
+                let idx = intersect.object.geometry.attributes._batchid.data.array[intersect.faceIndex*7+6];
+                console.log('Intersections: ',intersects.length);
+                console.log("Mousepos: ",mouse_vector);
+                console.log("Intersection: ",intersect,"Blockid:",intersect.object.parent.userData.id[idx]);
+              } else {
+                //removeHighlights();
+                //hideTooltip();
+              }
+            }
+          })
+        }
+
+        function mapClicked(event) {
+            console.log('******************* CLICK ********************');
+            console.log(`glmap._canvas.width: ${glmap._canvas.width}, height: ${glmap._canvas.height}`);
+            console.log(`glmap.transform.scale: ${glmap.transform.scale}, glmap.transform.pixelsToGLUnits: ${glmap.transform.pixelsToGLUnits}`)
+            logMatrix('glmap.transform.glCoordMatrix:', glmap.transform.glCoordMatrix);
+            logMatrix('tileslayer.camera.projectionMatrix.elements:', tileslayer.camera.projectionMatrix.elements);
+            logMatrix('tileslayer.camera.projectionMatrixInverse.elements:', tileslayer.camera.projectionMatrixInverse.elements);
+            //let features = glmap.queryRenderedFeatures(event.point, {layers:['drawPolygons']});
+            //if (features.length) {
+            //    console.log(features)
+            //}
+            checkIntersects([event.point.x,event.point.y], tileslayer.camera, tileslayer.scene);
+        }
+
+        function init() {
+          width = document.querySelector('#container').clientWidth;
+          glmap = new mapboxgl.Map({
+              container: 'container',
+              center: [4.62067229, 52.45920665],
+              zoom: 18,
+              style: "mapbox://styles/mapbox/light-v9"
+          });
+          glmap.on('load',_=>{
+              glmap.addLayer(tileslayer);
+          });
+          glmap.on("mousemove", e => {
+            checkIntersects(
+            [e.point.x,e.point.y],
+            tileslayer.camera,
+            tileslayer.scene //tileslayer.tileset.root.totalContent
+            ); 
+          });
+          glmap.on('click', e => mapClicked(e));
+
+          glmap.once('move', ()=>{
+            //cameraSync = new CameraSync(glmap, tileslayer.camera);
+          })
+
+          /*updatedCamera = new THREE.PerspectiveCamera( 28, window.innerWidth / window.innerHeight, 0.000000000001, Infinity);
+
+          // The CameraSync object will keep the Mapbox and THREE.js camera movements in sync.
+          // It requires a world group to scale as we zoom in. Rotation is handled in the camera's
+          // projection matrix itself (as is field of view and near/far clipping)
+          // It automatically registers to listen for move events on the map so we don't need to do that here
+          let world = new THREE.Group();
+          let scene = new THREE.Scene();
+          scene.add(world);
+
+          cameraSync = new CameraSync(glmap, updatedCamera, world);
+          */
+
+        }
+
+        addEventListener('load', init)
+    </script>
+</head>
+<body>
+
+    <div id='container' style='height:400px;'></div> 
+    Based on <a href="https://observablehq.com/@tomvantilburg/mapbox-3d-tiles-viewer">this observable</a>.
+</body>
+</html>
