@@ -15,9 +15,9 @@ function LightsArray() {
     arr.push(new THREE.DirectionalLightHelper( directionalLight1, 500));
     //arr.push(new THREE.DirectionalLightHelper( directionalLight2, 500)); 		
 
-          //this.scene.background = new THREE.Color( 0xaaaaaa );
-          //this.scene.add( new THREE.DirectionalLight() );
-          //this.scene.add( new THREE.HemisphereLight() );
+    //this.scene.background = new THREE.Color( 0xaaaaaa );
+    //this.scene.add( new THREE.DirectionalLight() );
+    //this.scene.add( new THREE.HemisphereLight() );
     return arr;
 }
 
@@ -45,31 +45,19 @@ class TileSet {
       this.geometricError = null;
       this.root = null;
     }
-    load(url, styleParams) {
+    async load(url, styleParams) {
       this.url = url;
       let resourcePath = THREE.LoaderUtils.extractUrlBase(url);
-      let self = this;
-      return new Promise((resolve, reject) => {
-        fetch(self.url)
-          .then(response => {
-            if (!response.ok) {
-              throw new Error(`HTTP ${response.status} - ${response.statusText}`);
-            }
-            return response;
-          })
-          .then(response => response.json())
-          .then(json => {
-            self.version = json.asset.version;
-            self.geometricError = json.geometricError;
-            self.refine = json.refine ? json.refine.toUpperCase() : 'ADD';
-            self.root = new ThreeDeeTile(json.root, resourcePath, styleParams, self.refine, true);
-          })
-          .then(res => resolve())
-          .catch(error => {
-            console.error(error);
-            reject(error);
-          });
-      });		
+      
+      let response = await fetch(this.url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} - ${response.statusText}`);
+      }
+      let json = await response.json();
+      this.version = json.asset.version;
+      this.geometricError = json.geometricError;
+      this.refine = json.refine ? json.refine.toUpperCase() : 'ADD';
+      this.root = new ThreeDeeTile(json.root, resourcePath, styleParams, this.refine, true);	
     }
   }
 
@@ -108,7 +96,8 @@ class TileSet {
       this.refine = json.refine ? json.refine.toUpperCase() : parentRefine;
       this.geometricError = json.geometricError;
       this.transform = json.transform;
-      if (this.transform && !isRoot) { 
+      if (this.transform && !isRoot) 
+      { 
         // if not the root tile: apply the transform to the THREE js Group
         // the root tile transform is applied to the camera while rendering
         this.totalContent.applyMatrix4(new THREE.Matrix4().fromArray(this.transform));
@@ -123,14 +112,14 @@ class TileSet {
         }
       }
     }
-    load() {
+    async load() {
       this.tileContent.visible = true;
       this.childContent.visible = true;
       if (this.loaded) {
         return;
       }
       this.loaded = true;
-      let self = this;
+      
       if (this.content) {
         let url = this.content.uri ? this.content.uri : this.content.url;
         if (!url) return;
@@ -140,42 +129,45 @@ class TileSet {
         if (type == 'json') {
           // child is a tileset json
           let tileset = new TileSet();
-          tileset.load(url, this.styleParams).then(function(){
-            self.children.push(tileset.root);
-            if (tileset.root) {
-              if (tileset.root.transform) {
-                // the root tile transform of a tileset is normally not applied because
-                // it is applied by the camera while rendering. However, in case the tileset 
-                // is a subset of another tileset, so the root tile transform must be applied 
-                // to the THREE js group of the root tile.
-                tileset.root.totalContent.applyMatrix4(new THREE.Matrix4().fromArray(tileset.root.transform));
-              }
-              self.childContent.add(tileset.root.totalContent);
+          await tileset.load(url, this.styleParams);
+          this.children.push(tileset.root);
+          if (tileset.root) {
+            if (tileset.root.transform) {
+              // the root tile transform of a tileset is normally not applied because
+              // it is applied by the camera while rendering. However, in case the tileset 
+              // is a subset of another tileset, so the root tile transform must be applied 
+              // to the THREE js group of the root tile.
+              tileset.root.totalContent.applyMatrix4(new THREE.Matrix4().fromArray(tileset.root.transform));
             }
-          });
+            this.childContent.add(tileset.root.totalContent);
+          }
         } else if (type == 'b3dm') {
           let loader = new THREE.GLTFLoader();
           let b3dm = new B3DM(url);
           let rotateX = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), Math.PI / 2);
-          self.tileContent.applyMatrix4(rotateX); // convert from GLTF Y-up to Z-up
-          b3dm.load()
-            .then(d => loader.parse(d.glbData, self.resourcePath, function(gltf) {
+          this.tileContent.applyMatrix4(rotateX); // convert from GLTF Y-up to Z-up
+          let d = await b3dm.load();
+          loader.parse(d.glbData, this.resourcePath, gltf => {
                 //Add the batchtable to the userData since gltLoader doesn't deal with it
                 gltf.scene.children[0].userData = d.batchTableJson;
-                var meshMaterial = new THREE.MeshNormalMaterial({color: 0x7777ff});
+                //var meshMaterial = new THREE.MeshNormalMaterial({color: 0x7777ff});
+                var meshMaterial = new THREE.MeshBasicMaterial({color: 0x7777ff});
                 gltf.scene.traverse(child => {
                   //child.material=meshMaterial;
+                  if (child.material) {
+                    child.material.depthWrite = true; // fix for GLTFLoader createDefaultMaterial and THREE.REVISION 114
+                  }
                 });
-                if (self.styleParams.color != null || self.styleParams.opacity != null) {
-                  let color = new THREE.Color(self.styleParams.color);
+                if (this.styleParams.color != null || this.styleParams.opacity != null) {
+                  let color = new THREE.Color(this.styleParams.color);
                   gltf.scene.traverse(child => {
                     
                     if (child instanceof THREE.Mesh) {
-                      if (self.styleParams.color != null) 
+                      if (this.styleParams.color != null) 
                         child.material.color = color;
-                      if (self.styleParams.opacity != null) {
-                        child.material.opacity = self.styleParams.opacity;
-                        child.material.transparent = self.styleParams.opacity < 1.0 ? true : false;
+                      if (this.styleParams.opacity != null) {
+                        child.material.opacity = this.styleParams.opacity;
+                        child.material.transparent = this.styleParams.opacity < 1.0 ? true : false;
                       }
                     }
                   });
@@ -184,39 +176,38 @@ class TileSet {
             /*
                 for (let i=0; i<children.length; i++) {
                   if (children[i].isObject3D) 
-                    self.tileContent.add(children[i]);
+                    this.tileContent.add(children[i]);
                 }*/
-                self.tileContent.add(gltf.scene);
+                this.tileContent.add(gltf.scene);
               }, function(e) {
                 throw new Error('error parsing gltf: ' + e);
               })
-            )
         } else if (type == 'pnts') {
           let pnts = new PNTS(url);
-          pnts.load()
-            .then(d => {
-              let geometry = new THREE.BufferGeometry();
-              geometry.setAttribute('position', new THREE.Float32BufferAttribute(d.points, 3));
-              let material = new THREE.PointsMaterial();
-              material.size = self.styleParams.pointsize != null ? self.styleParams.pointsize : 1.0;
-              if (self.styleParams.color) {
-                material.vertexColors = THREE.NoColors;
-                material.color = new THREE.Color(self.styleParams.color);
-                material.opacity = self.styleParams.opacity != null ? self.styleParams.opacity : 1.0;
-              } else if (d.rgba) {
-                geometry.setAttribute('color', new THREE.Float32BufferAttribute(d.rgba, 4));
-                material.vertexColors = THREE.VertexColors;
-              } else if (d.rgb) {
-                geometry.setAttribute('color', new THREE.Float32BufferAttribute(d.rgb, 3));
-                material.vertexColors = THREE.VertexColors;
-              }
-              self.tileContent.add(new THREE.Points( geometry, material ));
-              if (d.rtc_center) {
-                let c = d.rtc_center;
-                self.tileContent.applyMatrix4(new THREE.Matrix4().makeTranslation(c[0], c[1], c[2]));
-              }
-              self.tileContent.add(new THREE.Points( geometry, material ));
-            });
+          let d = await pnts.load()
+            
+          let geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(d.points, 3));
+          let material = new THREE.PointsMaterial();
+          material.size = this.styleParams.pointsize != null ? this.styleParams.pointsize : 1.0;
+          if (this.styleParams.color) {
+            material.vertexColors = THREE.NoColors;
+            material.color = new THREE.Color(this.styleParams.color);
+            material.opacity = this.styleParams.opacity != null ? this.styleParams.opacity : 1.0;
+          } else if (d.rgba) {
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(d.rgba, 4));
+            material.vertexColors = THREE.VertexColors;
+          } else if (d.rgb) {
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(d.rgb, 3));
+            material.vertexColors = THREE.VertexColors;
+          }
+          this.tileContent.add(new THREE.Points( geometry, material ));
+          if (d.rtc_center) {
+            let c = d.rtc_center;
+            this.tileContent.applyMatrix4(new THREE.Matrix4().makeTranslation(c[0], c[1], c[2]));
+          }
+          this.tileContent.add(new THREE.Points( geometry, material ));
+            
         } else if (type == 'i3dm') {
           throw new Error('i3dm tiles not yet implemented');					
         } else if (type == 'cmpt') {
@@ -309,7 +300,7 @@ class Mapbox3DTileLayer {
 		this.type = 'custom';
 		this.renderingMode = '3d';
 		
-		this.getCameraPosition = function() {
+		this.getCameraPosition = () => {
 			if (!this.viewProjectionMatrix)
 				return new THREE.Vector3();
 			let cam = new THREE.Camera();
@@ -320,7 +311,12 @@ class Mapbox3DTileLayer {
 			return campos;
 		}
 		
-		this.onAdd = function(map, gl) {
+		this.onAdd = async (map, gl) => {
+      this.renderer = new THREE.WebGLRenderer({
+				canvas: map.getCanvas(),
+				context: gl
+			});
+			this.renderer.autoClear = false;
 			this.map = map;
 			const fov = 45;
 			const aspect = window.innerWidth/window.innerHeight;
@@ -335,41 +331,36 @@ class Mapbox3DTileLayer {
       });
 
 			this.tileset = new TileSet();
-			let self = this;
-			this.tileset.load(this.url, styleParams).then(function(){
-				if (self.tileset.root.transform) {
-					self.rootTransform = transform2mapbox(self.tileset.root.transform);
-				} else {
-					self.rootTransform = transform2mapbox([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); // identity matrix tranformed to mapbox scale
-				}
-				
-				if (self.tileset.root) {
-					self.scene.add(self.tileset.root.totalContent);
-				}
-				
-				self.loadStatus = 1;
-				function refresh() {
-					let frustum = new THREE.Frustum();
-					frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(self.camera.projectionMatrix, self.camera.matrixWorldInverse));
-					self.tileset.root.checkLoad(frustum, self.getCameraPosition());
-				};
-				map.on('dragend',refresh); 
-				map.on('moveend',refresh); 
-				map.on('load',refresh);
-				
-				map.on('mousemove',e=>{
-					//let [mouseX, mouseY] = d3.mouse(view.node());
-    				let mouse_position = [e.point.x, e.point.y];
-					//Utils.checkIntersects(mouse_position,self.camera,self.tileset.root.totalContent);
-				})
-				
-			});
 			
-			this.renderer = new THREE.WebGLRenderer({
-				canvas: map.getCanvas(),
-				context: gl
-			});
-			this.renderer.autoClear = false;
+			await this.tileset.load(this.url, styleParams)
+			if (this.tileset.root.transform) {
+        this.rootTransform = transform2mapbox(this.tileset.root.transform);
+      } else {
+        this.rootTransform = transform2mapbox([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); // identity matrix tranformed to mapbox scale
+      }
+				
+			if (this.tileset.root) {
+					this.scene.add(this.tileset.root.totalContent);
+			}
+				
+      this.loadStatus = 1;
+
+      let refresh = () => {
+        let frustum = new THREE.Frustum();
+        frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+        this.tileset.root.checkLoad(frustum, this.getCameraPosition());
+      };
+      map.on('dragend',refresh); 
+      map.on('moveend',refresh); 
+      map.on('load',refresh);
+      
+      map.on('mousemove',e=>{
+        //let [mouseX, mouseY] = d3.mouse(view.node());
+          let mouse_position = [e.point.x, e.point.y];
+        //Utils.checkIntersects(mouse_position,self.camera,self.tileset.root.totalContent);
+      })
+			
+			
 			/* WIP on ssao  
 			this.composer = new EffectComposer( this.renderer );
 			let width = window.innerWidth;
@@ -391,7 +382,8 @@ class Mapbox3DTileLayer {
 			
 			// The root tile transform is applied to the camera while rendering
 			// instead of to the root tile. This avoids precision errors.
-			this.camera.projectionMatrix = l.multiply(this.rootTransform);
+      this.camera.projectionMatrix = l.multiply(this.rootTransform); //ANNE: undo
+      //this.camera.projectionMatrix = l;
 			
 			/*RENDER SKYBOX */
 			/* WIP
@@ -433,23 +425,14 @@ class TileLoader {
 		this.batchTableBinary = null;
 		this.binaryData = null;
 	}
-	load() {
-		let self = this;
-		return new Promise((resolve, reject) => {
-			fetch(self.url)
-				.then(response => {
-					if (!response.ok) {
-						throw new Error(`HTTP ${response.status} - ${response.statusText}`);
-					}
-					return response;
-				})
-				.then(response => response.arrayBuffer())
-				.then(buffer => self.parseResponse(buffer))
-				.then(res => resolve(res))
-				.catch(error => {
-					reject(error);
-				});
-		});		
+	async load() {
+    let response = await fetch(this.url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} - ${response.statusText}`);
+    }
+    let buffer = await response.arrayBuffer();
+    let result = await this.parseResponse(buffer);
+    return result;
 	}
 	parseResponse(buffer) {
 		let header = new Uint32Array(buffer.slice(0, 28));
